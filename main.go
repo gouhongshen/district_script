@@ -46,7 +46,7 @@ type Bmsql_District struct {
 }
 
 func CreateTable() *gorm.DB {
-	dsn := "dump:111@tcp(127.0.0.1:6002)/fake_tpcc?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := "dump:111@tcp(127.0.0.1:6001)/fake_tpcc?charset=utf8mb4&parseTime=True&loc=Local"
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error)})
 	if err != nil {
@@ -89,9 +89,9 @@ func LaunchCheckWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
 				return
 			case <-ticker.C:
 				var result []struct {
-					Wid uint
-					Did uint
-					Cnt int
+					D_W_Id uint
+					D_Id   uint
+					Cnt    int
 				}
 
 				if err := ses.Table("bmsql_districts").
@@ -103,8 +103,9 @@ func LaunchCheckWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
 					log.Fatalf("Failed to execute query: %v", err)
 				}
 
+				fmt.Println(result[0])
 				if result[0].Cnt > 1 {
-					fmt.Println("consistency failed: ", result[0].Wid, result[0].Did, result[0].Cnt)
+					fmt.Println("consistency failed: ", result[0].D_W_Id, result[0].D_Id, result[0].Cnt)
 				}
 			}
 		}
@@ -129,7 +130,6 @@ func LaunchUpdateWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
 			}
 		}
 	}()
-
 }
 
 func InitTable(db *gorm.DB) {
