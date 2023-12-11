@@ -118,13 +118,13 @@ func LaunchUpdateWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
 		defer wg.Done()
 
 		ses := db.Session(&gorm.Session{PrepareStmt: true})
-		ticker := time.NewTicker(time.Microsecond)
+		//ticker := time.NewTicker(time.Microsecond)
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			default:
 				RunUpdateSql(ses)
 			}
 		}
@@ -148,14 +148,17 @@ func main() {
 	InitTable(db)
 
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*30)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour*30)
 	defer cancel()
 
+	fmt.Println("start creating worker...")
 	for idx := 0; idx < 100; idx++ {
 		LaunchUpdateWorker(ctx, &wg, db)
 	}
 
 	LaunchCheckWorker(ctx, &wg, db)
+
+	fmt.Println("all worker created done.")
 
 	wg.Wait()
 
