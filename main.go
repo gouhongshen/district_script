@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 	"log"
 	"math/rand"
@@ -61,18 +62,45 @@ func CreateTable() *gorm.DB {
 }
 
 func RunUpdateSql(db *gorm.DB) {
-	rand.New(rand.NewSource(time.Now().UnixNano()))
+	seedRand := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	wid := rand.Int31()%10 + 1
-	did := rand.Int31()%10 + 1
+	wid := seedRand.Int31()%2 + 1
+	did := seedRand.Int31()%10 + 1
 
-	db.Transaction(func(tx *gorm.DB) error {
-		tx.Model(&Bmsql_District{}).
-			Where("d_w_id = ? and d_id = ?", wid, did).
-			UpdateColumn("`d_next_o_id`", gorm.Expr("`d_next_o_id` + ?", 1))
-		return nil
-	})
+	txn := db.Begin()
 
+	if err := txn.Table("bmsql_districts").Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select(fmt.Sprintf("`d_w_id`=%d and `d_id`=%d", wid, did)).Error; err != nil {
+		fmt.Println(err)
+	}
+
+	if err := txn.Table("bmsql_districts").Where("d_w_id = ? and d_id = ?", wid, did).
+		UpdateColumn("`d_next_o_id`", gorm.Expr("`d_next_o_id` + ?", 1)).Error; err != nil {
+		fmt.Println(err)
+	}
+
+	txn.Commit()
+}
+
+func FlushAndCkpWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		ses := db.Session(&gorm.Session{PrepareStmt: true})
+		ticker := time.NewTicker(500 * time.Millisecond)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				//fmt.Println("flush and checkpoint")
+				ses.Exec("select mo_ctl('dn', 'checkpoint', '')")
+				ses.Exec("select mo_ctl('dn', 'flush', 'fake_tpcc.bmsql_districts')")
+			}
+		}
+	}()
 }
 
 func LaunchCheckWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
@@ -133,7 +161,7 @@ func LaunchUpdateWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
 }
 
 func InitTable(db *gorm.DB) {
-	for wid := 1; wid <= 10; wid++ {
+	for wid := 1; wid <= 2; wid++ {
 		for did := 1; did <= 10; did++ {
 			db.Save(Bmsql_District{
 				D_W_Id: int32(wid),
@@ -152,11 +180,12 @@ func main() {
 	defer cancel()
 
 	fmt.Println("start creating worker...")
-	for idx := 0; idx < 100; idx++ {
+	for idx := 0; idx < 20; idx++ {
 		LaunchUpdateWorker(ctx, &wg, db)
 	}
 
 	LaunchCheckWorker(ctx, &wg, db)
+	FlushAndCkpWorker(ctx, &wg, db)
 
 	fmt.Println("all worker created done.")
 
