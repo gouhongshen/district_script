@@ -49,7 +49,7 @@ type Bmsql_District struct {
 func CreateTable() *gorm.DB {
 	dsn := "dump:111@tcp(127.0.0.1:6001)/fake_tpcc?charset=utf8mb4&parseTime=True&loc=Local"
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Error)})
+		Logger: logger.Default.LogMode(logger.Info)})
 	if err != nil {
 		panic("failed to connect to database!")
 	}
@@ -67,16 +67,27 @@ func RunUpdateSql(db *gorm.DB) {
 	wid := seedRand.Int31()%2 + 1
 	did := seedRand.Int31()%10 + 1
 
+	updateType := seedRand.Int() % 2
+
 	txn := db.Begin()
 
-	if err := txn.Table("bmsql_districts").Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select(fmt.Sprintf("`d_w_id`=%d and `d_id`=%d", wid, did)).Error; err != nil {
-		fmt.Println(err)
-	}
+	if updateType == 0 {
+		// select for update and update
+		if err := txn.Table("bmsql_districts").Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select(fmt.Sprintf("`d_w_id`=%d and `d_id`=%d", wid, did)).Error; err != nil {
+			fmt.Println(err)
+		}
 
-	if err := txn.Table("bmsql_districts").Where("d_w_id = ? and d_id = ?", wid, did).
-		UpdateColumn("`d_next_o_id`", gorm.Expr("`d_next_o_id` + ?", 1)).Error; err != nil {
-		fmt.Println(err)
+		if err := txn.Table("bmsql_districts").Where("d_w_id = ? and d_id = ?", wid, did).
+			UpdateColumn("`d_next_o_id`", gorm.Expr("`d_next_o_id` + ?", 1)).Error; err != nil {
+			fmt.Println(err)
+		}
+	} else {
+		// update directly
+		if err := txn.Table("bmsql_districts").Where("d_w_id = ? and d_id = ?", wid, did).
+			UpdateColumn("`d_next_o_id`", gorm.Expr("`d_next_o_id` + ?", 1)).Error; err != nil {
+			fmt.Println(err)
+		}
 	}
 
 	txn.Commit()
@@ -88,7 +99,7 @@ func FlushAndCkpWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
 		defer wg.Done()
 
 		ses := db.Session(&gorm.Session{PrepareStmt: true})
-		ticker := time.NewTicker(500 * time.Millisecond)
+		ticker := time.NewTicker(1000 * time.Millisecond)
 
 		for {
 			select {
