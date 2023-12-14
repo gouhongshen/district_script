@@ -49,7 +49,7 @@ type Bmsql_District struct {
 func CreateTable() *gorm.DB {
 	dsn := "dump:111@tcp(127.0.0.1:6001)/fake_tpcc?charset=utf8mb4&parseTime=True&loc=Local"
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info)})
+		Logger: logger.Default.LogMode(logger.Error)})
 	if err != nil {
 		panic("failed to connect to database!")
 	}
@@ -182,6 +182,26 @@ func InitTable(db *gorm.DB) {
 	}
 }
 
+func MoTableXXWorker(ctx context.Context, wg *sync.WaitGroup, db *gorm.DB) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		ses := db.Session(&gorm.Session{PrepareStmt: false})
+		ticker := time.NewTicker(time.Millisecond * 5)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ses.Exec("select mo_table_size('fake_tpcc', 'bmsql_districts')")
+				ses.Exec("select mo_table_rows('fake_tpcc', 'bmsql_districts')")
+			}
+		}
+	}()
+}
+
 func main() {
 	db := CreateTable()
 	InitTable(db)
@@ -197,6 +217,7 @@ func main() {
 
 	LaunchCheckWorker(ctx, &wg, db)
 	FlushAndCkpWorker(ctx, &wg, db)
+	MoTableXXWorker(ctx, &wg, db)
 
 	fmt.Println("all worker created done.")
 
