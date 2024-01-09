@@ -76,11 +76,11 @@ func createSinglePKTable() *gorm.DB {
 	return db
 }
 
-func insertJob(ses []*gorm.DB, group bool, left, right int, tblName string, wg *sync.WaitGroup) {
+func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGroup) {
 	start := time.Now()
 	totalRows := right - left + 1
-	if group {
-		step := 100
+	if *withTxn > 0 {
+		step := *withTxn
 
 		idx := left
 		for ; idx+step < right; idx += step {
@@ -109,19 +109,19 @@ func insertJob(ses []*gorm.DB, group bool, left, right int, tblName string, wg *
 	wg.Done()
 }
 
-func InsertWorker(db *gorm.DB, tblName string, sesCnt, terCnt int, group bool) {
+func InsertWorker(db *gorm.DB, tblName string) {
 	var ses []*gorm.DB
-	for idx := 0; idx < sesCnt; idx++ {
+	for idx := 0; idx < *sessions; idx++ {
 		ses = append(ses, db.Session(&gorm.Session{PrepareStmt: false}))
 	}
 
 	maxRows := *tblSize
-	step := maxRows / terCnt
+	step := maxRows / *terminals
 
 	var wg sync.WaitGroup
-	for idx := 0; idx < terCnt; idx++ {
+	for idx := 0; idx < *terminals; idx++ {
 		wg.Add(1)
-		go insertJob(ses, group, idx*step, idx*step+step, tblName, &wg)
+		go insertJob(ses, idx*step, idx*step+step, tblName, &wg)
 	}
 
 	wg.Wait()
@@ -136,37 +136,20 @@ func Test_Main(t *testing.T) {
 	fmt.Printf("start: %s\n", time.Now().Local())
 
 	if *withPK > 0 {
-		if *withTxn > 0 {
-			Test_SinglePKTxnInsert(t)
-		} else {
-			Test_SinglePKInsert(t)
-		}
+		Test_SinglePKInsert(t)
 	} else {
-		if *withTxn > 0 {
-			Test_NoPKTxnInsert(t)
-		} else {
-			Test_NoPKInsert(t)
-		}
+		Test_NoPKInsert(t)
+
 	}
 	fmt.Println("end: ", time.Now().Local())
 }
 
 func Test_NoPKInsert(t *testing.T) {
 	db := createNoPKTable()
-	InsertWorker(db, "no_pk_tables", *sessions, *terminals, false)
-}
-
-func Test_NoPKTxnInsert(t *testing.T) {
-	db := createNoPKTable()
-	InsertWorker(db, "no_pk_tables", *sessions, *terminals, true)
+	InsertWorker(db, "no_pk_tables")
 }
 
 func Test_SinglePKInsert(t *testing.T) {
 	db := createSinglePKTable()
-	InsertWorker(db, "single_pk_tables", *sessions, *terminals, false)
-}
-
-func Test_SinglePKTxnInsert(t *testing.T) {
-	db := createSinglePKTable()
-	InsertWorker(db, "single_pk_tables", *sessions, *terminals, true)
+	InsertWorker(db, "single_pk_tables")
 }
