@@ -34,6 +34,8 @@ var terminals = flag.Int("terminals", 1, "parallel terminals to test")
 var sessions = flag.Int("sessions", 1, "sessions cnt to test")
 var withPK = flag.Int("withPK", 0, "")
 var withTxn = flag.Int("withTXN", 0, "")
+var keepTbl = flag.Int("keepTbl", 0, "")
+var tblSize = flag.Int("tblSize", 1000*10*3, "")
 
 const dbname string = "standalone_insert_db"
 
@@ -52,8 +54,10 @@ func createNoPKTable() *gorm.DB {
 	//if err := db.AutoMigrate(&NoPKTable{}); err != nil {
 	//	panic("failed to create table")
 	//}
-	db.Exec("drop table no_pk_tables")
-	db.Exec("create table no_pk_tables (a bigint, b bigint, c bigint)")
+	if *keepTbl <= 0 {
+		db.Exec("drop table no_pk_tables")
+		db.Exec("create table no_pk_tables (a bigint, b bigint, c bigint)")
+	}
 
 	return db
 }
@@ -64,8 +68,10 @@ func createSinglePKTable() *gorm.DB {
 	//	panic("failed to create table")
 	//}
 
-	db.Exec("drop table single_pk_tables")
-	db.Exec("create table single_pk_tables (a bigint, b bigint, c bigint, primary key (`a`))")
+	if *keepTbl <= 0 {
+		db.Exec("drop table single_pk_tables")
+		db.Exec("create table single_pk_tables (a bigint, b bigint, c bigint, primary key (`a`))")
+	}
 
 	return db
 }
@@ -109,7 +115,7 @@ func InsertWorker(db *gorm.DB, tblName string, sesCnt, terCnt int, group bool) {
 		ses = append(ses, db.Session(&gorm.Session{PrepareStmt: false}))
 	}
 
-	maxRows := 1000 * 10 * 5
+	maxRows := *tblSize
 	step := maxRows / terCnt
 
 	var wg sync.WaitGroup
@@ -125,7 +131,8 @@ func InsertWorker(db *gorm.DB, tblName string, sesCnt, terCnt int, group bool) {
 func Test_Main(t *testing.T) {
 	flag.Parse()
 	fmt.Printf(
-		"terminals: %d, sessions: %d, withPK: %d, withTxn: %d\n", *terminals, *sessions, *withPK, *withTxn)
+		"terminals: %d, sessions: %d, withPK: %d, withTxn: %d, keepTbl: %d, tblSize %dW\n",
+		*terminals, *sessions, *withPK, *withTxn, *keepTbl, (*tblSize)/10000)
 	fmt.Printf("start: %s\n", time.Now().Local())
 
 	if *withPK > 0 {
