@@ -35,7 +35,7 @@ var sessions = flag.Int("sessions", 1, "sessions cnt to test")
 var withPK = flag.Int("withPK", 0, "")
 var withTxn = flag.Int("withTXN", 0, "")
 var keepTbl = flag.Int("keepTbl", 0, "")
-var tblSize = flag.Int("tblSize", 1000*10*3, "")
+var insSize = flag.Int("insSize", 1000*10*3, "")
 
 const dbname string = "standalone_insert_db"
 
@@ -77,6 +77,12 @@ func createSinglePKTable() *gorm.DB {
 }
 
 func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGroup) {
+	startIdx := int64(0)
+	if *keepTbl > 0 {
+		ses[0].Table(tblName).Count(&startIdx)
+		startIdx *= 2
+	}
+
 	start := time.Now()
 	totalRows := right - left + 1
 	if *withTxn > 0 {
@@ -86,14 +92,20 @@ func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGro
 		for ; idx+step < right; idx += step {
 			txn := ses[rand.Int()%len(ses)].Begin()
 			for x := idx; x < idx+step; x++ {
-				txn.Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), x, x*2, x*3)
+				a := int64(x) + startIdx
+				b := 2 * a
+				c := 3 * a
+				txn.Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), a, b, c)
 			}
 			txn.Commit()
 		}
 
 		txn := ses[rand.Int()%len(ses)].Begin()
 		for ; idx < right; idx++ {
-			txn.Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), idx, idx*2, idx*3)
+			a := int64(idx) + startIdx
+			b := 2 * a
+			c := 3 * a
+			txn.Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), a, b, c)
 		}
 		txn.Commit()
 
@@ -101,7 +113,10 @@ func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGro
 
 	} else {
 		for idx := left; idx < right; idx++ {
-			ses[rand.Int()%len(ses)].Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), idx, idx*2, idx*3)
+			a := int64(idx) + startIdx
+			b := 2 * a
+			c := 3 * a
+			ses[rand.Int()%len(ses)].Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), a, b, c)
 		}
 		fmt.Printf("no pk table insert %d rows done, takes %f s\n", totalRows, time.Since(start).Seconds())
 	}
@@ -115,7 +130,7 @@ func InsertWorker(db *gorm.DB, tblName string) {
 		ses = append(ses, db.Session(&gorm.Session{PrepareStmt: false}))
 	}
 
-	maxRows := *tblSize
+	maxRows := *insSize
 	step := maxRows / *terminals
 
 	var wg sync.WaitGroup
@@ -131,8 +146,8 @@ func InsertWorker(db *gorm.DB, tblName string) {
 func Test_Main(t *testing.T) {
 	flag.Parse()
 	fmt.Printf(
-		"terminals: %d, sessions: %d, withPK: %d, withTxn: %d, keepTbl: %d, tblSize %dW\n",
-		*terminals, *sessions, *withPK, *withTxn, *keepTbl, (*tblSize)/10000)
+		"terminals: %d, sessions: %d, withPK: %d, withTxn: %d, keepTbl: %d, insSize %dW\n",
+		*terminals, *sessions, *withPK, *withTxn, *keepTbl, (*insSize)/10000)
 	fmt.Printf("start: %s\n", time.Now().Local())
 
 	if *withPK > 0 {
