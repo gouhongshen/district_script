@@ -77,6 +77,20 @@ func createSinglePKTable() *gorm.DB {
 	return db
 }
 
+func createClusterPKTable() *gorm.DB {
+	db := connect2DB()
+	//if err := db.AutoMigrate(&SinglePKTable{}); err != nil {
+	//	panic("failed to create table")
+	//}
+
+	if *keepTbl <= 0 {
+		db.Exec("drop table cluster_pk_tables")
+		db.Exec("create table cluster_pk_tables (a bigint, b bigint, c bigint, primary key (`a`, `b`))")
+	}
+
+	return db
+}
+
 func generateValues(s int, e int, offset int64) (string, time.Duration) {
 	start := time.Now()
 	var values []string
@@ -168,7 +182,9 @@ func Test_Main(t *testing.T) {
 		*terminals, *sessions, *withPK, *withTxn, *keepTbl, (*insSize)/10000)
 	fmt.Printf("start: %s\n", time.Now().Local())
 
-	if *withPK > 0 {
+	if *withPK == 2 {
+		Test_ClusterPKInsert(t)
+	} else if *withPK == 1 {
 		Test_SinglePKInsert(t)
 	} else {
 		Test_NoPKInsert(t)
@@ -185,4 +201,9 @@ func Test_NoPKInsert(t *testing.T) {
 func Test_SinglePKInsert(t *testing.T) {
 	db := createSinglePKTable()
 	InsertWorker(db, "single_pk_tables")
+}
+
+func Test_ClusterPKInsert(t *testing.T) {
+	db := createClusterPKTable()
+	InsertWorker(db, "cluster_pk_tables")
 }
