@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -76,6 +77,18 @@ func createSinglePKTable() *gorm.DB {
 	return db
 }
 
+func generateValues(s int, e int, offset int64) (string, time.Duration) {
+	start := time.Now()
+	var values []string
+	for idx := s; idx < e; idx++ {
+		a := int64(idx) + offset
+		b := 2 * a
+		c := 3 * a
+		values = append(values, fmt.Sprintf("(%d,%d,%d)", a, b, c))
+	}
+	return strings.Join(values, ","), time.Since(start)
+}
+
 func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGroup) {
 	startIdx := int64(0)
 	if *keepTbl > 0 {
@@ -83,33 +96,29 @@ func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGro
 		startIdx *= 2
 	}
 
+	noiseDur := time.Duration(0)
 	start := time.Now()
-	totalRows := right - left + 1
+	totalRows := right - left
+
 	if *withTxn > 0 {
 		step := *withTxn
 
 		idx := left
 		for ; idx+step < right; idx += step {
-			txn := ses[rand.Int()%len(ses)].Begin()
-			for x := idx; x < idx+step; x++ {
-				a := int64(x) + startIdx
-				b := 2 * a
-				c := 3 * a
-				txn.Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), a, b, c)
-			}
-			txn.Commit()
+			values, dur := generateValues(idx, idx+step, startIdx)
+			noiseDur += dur
+
+			ses[rand.Int()%len(ses)].Exec(fmt.Sprintf("insert into %s values %s;", tblName, values))
 		}
 
-		txn := ses[rand.Int()%len(ses)].Begin()
-		for ; idx < right; idx++ {
-			a := int64(idx) + startIdx
-			b := 2 * a
-			c := 3 * a
-			txn.Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), a, b, c)
-		}
-		txn.Commit()
+		values, dur := generateValues(idx, right, startIdx)
+		noiseDur += dur
 
-		fmt.Printf("no pk table insert %d rows (with txn %d) done, takes %f s\n", totalRows, step, time.Since(start).Seconds())
+		ses[rand.Int()%len(ses)].Exec(fmt.Sprintf("insert into %s values %s;", tblName, values))
+
+		realDur := (time.Since(start) - noiseDur).Seconds()
+		fmt.Printf("no pk table insert %d rows (with txn %d) done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
+			totalRows, step, realDur, realDur*1000/(float64(totalRows)/float64(step)), step)
 
 	} else {
 		for idx := left; idx < right; idx++ {
@@ -118,7 +127,10 @@ func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGro
 			c := 3 * a
 			ses[rand.Int()%len(ses)].Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), a, b, c)
 		}
-		fmt.Printf("no pk table insert %d rows done, takes %f s\n", totalRows, time.Since(start).Seconds())
+
+		realDur := (time.Since(start) - noiseDur).Seconds()
+		fmt.Printf("no pk table insert %d rows done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
+			totalRows, realDur, realDur*1000/(float64(totalRows)), 1)
 	}
 
 	wg.Done()
@@ -136,7 +148,13 @@ func InsertWorker(db *gorm.DB, tblName string) {
 	var wg sync.WaitGroup
 	for idx := 0; idx < *terminals; idx++ {
 		wg.Add(1)
-		go insertJob(ses, idx*step, idx*step+step, tblName, &wg)
+		left := idx * step
+		right := idx*step + step
+
+		if idx == *terminals-1 {
+			right = maxRows
+		}
+		go insertJob(ses, left, right, tblName, &wg)
 	}
 
 	wg.Wait()
