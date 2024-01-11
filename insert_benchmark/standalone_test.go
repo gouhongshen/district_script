@@ -85,6 +85,7 @@ func createClusterPKTable() *gorm.DB {
 
 	if *keepTbl <= 0 {
 		db.Exec("drop table cluster_pk_tables")
+		time.Sleep(time.Second)
 		db.Exec("create table cluster_pk_tables (a bigint, b bigint, c bigint, primary key (`a`, `b`))")
 	}
 
