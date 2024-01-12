@@ -1,6 +1,7 @@
 package insert_benchmark
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"gorm.io/driver/mysql"
@@ -8,6 +9,7 @@ import (
 	"gorm.io/gorm/logger"
 	"math/rand"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +40,9 @@ var withPK = flag.Int("withPK", 0, "")
 var withTxn = flag.Int("withTXN", 1000, "")
 var keepTbl = flag.Int("keepTbl", 0, "")
 var insSize = flag.Int("insSize", 1000*1000, "")
+
+var latencyDir string = "./latency_recorder"
+var tracePProfDir string = "./trace_pprof"
 
 const dbname string = "standalone_insert_db"
 
@@ -127,7 +132,8 @@ func newLatencyRecorder(cnt int, step int) []*latencyRecorder {
 
 func syncLatency(tblName string, op string) {
 	// -withPK 2 -terminals 50 -sessions 50 -withTXN 10000 -keepTbl 0 -insSize 100000000
-	fileName := fmt.Sprintf("%s_%s_pk%d_ter%d_ses%d_txn%d_keep%d_insSize%dw_%.5f",
+	fileName := fmt.Sprintf("%s/%s_%s_pk%d_ter%d_ses%d_txn%d_keep%d_insSize%dw_%.5f",
+		latencyDir,
 		tblName, op, *withPK, *terminals, *sessions, *withTxn, *keepTbl, *insSize/10000,
 		float64(time.Now().Unix())/(60*60))
 
@@ -249,8 +255,48 @@ func InsertWorker(db *gorm.DB, tblName string) {
 		go insertJob(ses, left, right, tblName, &wg, idx)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan struct{})
+	go tracePProfWorker(ctx, ch)
+
 	wg.Wait()
+	cancel()
+
+	<-ch
+
 	syncLatency(tblName, "insert")
+}
+
+func tracePProfWorker(ctx context.Context, ch chan struct{}) {
+	id := 0
+	wg := sync.WaitGroup{}
+	ticker := time.NewTicker(time.Second * 10)
+	for {
+		select {
+		case <-ctx.Done():
+			ch <- struct{}{}
+			return
+		case <-ticker.C:
+			wg.Add(2)
+			go func() {
+				name := fmt.Sprintf("%s/trace_%02d.out", tracePProfDir, id)
+				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/trace?seconds=30")
+				cmd.Run()
+				wg.Done()
+			}()
+
+			go func() {
+				name := fmt.Sprintf("%s/profile_%02d.out", tracePProfDir, id)
+				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/profile?seconds=30")
+				cmd.Run()
+				wg.Done()
+			}()
+
+			wg.Wait()
+			id++
+			ticker.Reset(time.Second * 30)
+		}
+	}
 }
 
 func Test_Main(t *testing.T) {
