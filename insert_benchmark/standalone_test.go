@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"math/rand"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -31,12 +32,12 @@ type ClusterPKTable struct {
 	C int64
 }
 
-var terminals = flag.Int("terminals", 1, "parallel terminals to test")
-var sessions = flag.Int("sessions", 1, "sessions cnt to test")
+var terminals = flag.Int("terminals", 5, "parallel terminals to test")
+var sessions = flag.Int("sessions", 5, "sessions cnt to test")
 var withPK = flag.Int("withPK", 0, "")
-var withTxn = flag.Int("withTXN", 0, "")
+var withTxn = flag.Int("withTXN", 1000, "")
 var keepTbl = flag.Int("keepTbl", 0, "")
-var insSize = flag.Int("insSize", 1000*10*3, "")
+var insSize = flag.Int("insSize", 1000*1000, "")
 
 const dbname string = "standalone_insert_db"
 
@@ -104,7 +105,81 @@ func generateValues(s int, e int, offset int64) (string, time.Duration) {
 	return strings.Join(values, ","), time.Since(start)
 }
 
-func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGroup) {
+type latencyRecorder struct {
+	OpCounter, RecorderStep int64
+	LatencyMap              map[int64]int64
+}
+
+var recorders []*latencyRecorder
+
+func newLatencyRecorder(cnt int, step int) []*latencyRecorder {
+	recorders := make([]*latencyRecorder, cnt)
+	for idx := 0; idx < cnt; idx++ {
+		recorders[idx] = &latencyRecorder{
+			OpCounter:    int64(0),
+			RecorderStep: int64(step),
+			LatencyMap:   make(map[int64]int64),
+		}
+	}
+
+	return recorders
+}
+
+func syncLatency(tblName string, op string) {
+	// -withPK 2 -terminals 50 -sessions 50 -withTXN 10000 -keepTbl 0 -insSize 100000000
+	fileName := fmt.Sprintf("%s_%s_pk%d_ter%d_ses%d_txn%d_keep%d_insSize%dw_%.5f",
+		tblName, op, *withPK, *terminals, *sessions, *withTxn, *keepTbl, *insSize/10000,
+		float64(time.Now().Unix())/(60*60))
+
+	file, err := os.Create(fileName)
+	if err != nil {
+		fmt.Println("sync latency failed")
+	}
+
+	for idx := range recorders {
+		file.WriteString(fmt.Sprintf("terminal: %d, %s %d, %d each time\n",
+			idx, op, recorders[idx].OpCounter, *withTxn))
+
+		latency := make([]int64, len(recorders[idx].LatencyMap))
+		for k, v := range recorders[idx].LatencyMap {
+			latency[int(k)] = v
+		}
+
+		acc := int(0)
+		for k := range latency {
+			start := k * int(recorders[idx].RecorderStep)
+			end := start + int(recorders[idx].RecorderStep)
+
+			opCnt := int(recorders[idx].RecorderStep)
+			if k == len(latency)-1 {
+				opCnt = int(recorders[idx].OpCounter) - acc
+			}
+			acc += opCnt
+
+			avg := float64(latency[k]) / float64(opCnt)
+			file.WriteString(fmt.Sprintf("[%d_%d): %12.6fms\n", start, end, avg))
+		}
+
+		file.WriteString("\n")
+	}
+
+	file.Sync()
+	file.Close()
+}
+
+func insertHelper(db *gorm.DB, tblName string, values string, jobId int) {
+	start := time.Now()
+	rr := recorders[jobId]
+
+	db.Exec(fmt.Sprintf("insert into %s values %s;", tblName, values))
+
+	dur := time.Since(start).Milliseconds()
+
+	rr.LatencyMap[rr.OpCounter/rr.RecorderStep] += dur
+	rr.OpCounter++
+}
+
+func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGroup, jobId int) {
 	startIdx := int64(0)
 	if *keepTbl > 0 {
 		ses[0].Table(tblName).Count(&startIdx)
@@ -123,35 +198,37 @@ func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGro
 			values, dur := generateValues(idx, idx+step, startIdx)
 			noiseDur += dur
 
-			ses[rand.Int()%len(ses)].Exec(fmt.Sprintf("insert into %s values %s;", tblName, values))
+			insertHelper(ses[rand.Int()%len(ses)], tblName, values, jobId)
 		}
 
 		values, dur := generateValues(idx, right, startIdx)
 		noiseDur += dur
 
-		ses[rand.Int()%len(ses)].Exec(fmt.Sprintf("insert into %s values %s;", tblName, values))
+		insertHelper(ses[rand.Int()%len(ses)], tblName, values, jobId)
 
 		realDur := (time.Since(start) - noiseDur).Seconds()
-		fmt.Printf("no pk table insert %d rows (with txn %d) done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
-			totalRows, step, realDur, realDur*1000/(float64(totalRows)/float64(step)), step)
+		fmt.Printf("insert into %s %d rows (with txn %d) done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
+			tblName, totalRows, step, realDur, realDur*1000/(float64(totalRows)/float64(step)), step)
 
 	} else {
 		for idx := left; idx < right; idx++ {
-			a := int64(idx) + startIdx
-			b := 2 * a
-			c := 3 * a
-			ses[rand.Int()%len(ses)].Exec(fmt.Sprintf("insert into %s values(?, ?, ?);", tblName), a, b, c)
+			values, dur := generateValues(idx, idx+1, startIdx)
+			noiseDur += dur
+
+			insertHelper(ses[rand.Int()%len(ses)], tblName, values, jobId)
 		}
 
 		realDur := (time.Since(start) - noiseDur).Seconds()
-		fmt.Printf("no pk table insert %d rows done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
-			totalRows, realDur, realDur*1000/(float64(totalRows)), 1)
+		fmt.Printf("insert into %s %d rows done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
+			tblName, totalRows, realDur, realDur*1000/(float64(totalRows)), 1)
 	}
 
 	wg.Done()
 }
 
 func InsertWorker(db *gorm.DB, tblName string) {
+	recorders = newLatencyRecorder(*terminals, 100)
+
 	var ses []*gorm.DB
 	for idx := 0; idx < *sessions; idx++ {
 		ses = append(ses, db.Session(&gorm.Session{PrepareStmt: false}))
@@ -169,11 +246,11 @@ func InsertWorker(db *gorm.DB, tblName string) {
 		if idx == *terminals-1 {
 			right = maxRows
 		}
-		go insertJob(ses, left, right, tblName, &wg)
+		go insertJob(ses, left, right, tblName, &wg, idx)
 	}
 
 	wg.Wait()
-
+	syncLatency(tblName, "insert")
 }
 
 func Test_Main(t *testing.T) {
