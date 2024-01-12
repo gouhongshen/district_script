@@ -139,7 +139,7 @@ func syncLatency(tblName string, op string) {
 
 	file, err := os.Create(fileName)
 	if err != nil {
-		fmt.Println("sync latency failed")
+		fmt.Println("sync latency failed: ", err.Error())
 	}
 
 	for idx := range recorders {
@@ -235,6 +235,9 @@ func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGro
 func InsertWorker(db *gorm.DB, tblName string) {
 	recorders = newLatencyRecorder(*terminals, 100)
 
+	os.Mkdir(tracePProfDir, 0666)
+	os.Mkdir(latencyDir, 0666)
+
 	var ses []*gorm.DB
 	for idx := 0; idx < *sessions; idx++ {
 		ses = append(ses, db.Session(&gorm.Session{PrepareStmt: false}))
@@ -281,14 +284,19 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 			go func() {
 				name := fmt.Sprintf("%s/trace_%02d.out", tracePProfDir, id)
 				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/trace?seconds=30")
-				cmd.Run()
+
+				if err := cmd.Run(); err != nil {
+					fmt.Println(err.Error())
+				}
 				wg.Done()
 			}()
 
 			go func() {
 				name := fmt.Sprintf("%s/profile_%02d.out", tracePProfDir, id)
 				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/profile?seconds=30")
-				cmd.Run()
+				if err := cmd.Run(); err != nil {
+					fmt.Println(err.Error())
+				}
 				wg.Done()
 			}()
 
