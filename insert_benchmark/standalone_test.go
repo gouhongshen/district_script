@@ -47,7 +47,7 @@ var tracePProfDir string = "./trace_pprof"
 const dbname string = "standalone_insert_db"
 
 func connect2DB() *gorm.DB {
-	dsn := fmt.Sprintf("dump:111@tcp(127.0.0.1:6001)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
+	dsn := fmt.Sprintf("dump:f56TEhwiswWu@tcp(127.0.0.1:6003)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error)})
 	if err != nil {
