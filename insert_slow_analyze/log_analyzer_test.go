@@ -2,6 +2,7 @@ package insert_slow_analyze
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,7 +66,7 @@ func decodePair(str string) (start, end int64, err error) {
 
 // sql output:(1705481901982721474,1705481901984339420)(1705481901984339974,1705481902126540127);projection:(1705481947931432312,1705481947931912779)(1705481947931432206,1705481947931973741)
 func extractPhase(mm map[string]string, item *Item) bool {
-	phase, ok := mm["phase duration"]
+	phase, ok := mm["operator duration"]
 	if !ok {
 		fmt.Println("no phase duration")
 		return false
@@ -175,7 +176,7 @@ func extractCNCommit(mm map[string]string, item *Item) bool {
 	return true
 }
 
-func prepare(line string) (map[string]string, bool) {
+func extractPrepare(line string) (map[string]string, bool) {
 	idx := strings.Index(line, "{")
 	if idx == -1 {
 		return nil, false
@@ -193,7 +194,12 @@ func prepare(line string) (map[string]string, bool) {
 	return mm, true
 }
 
-func lineExtractor(lineStream chan string, logCh chan *Item) {
+func lineExtractor(lineStream chan string, logCh chan *Item, wg *sync.WaitGroup) {
+	defer func() {
+		close(logCh)
+		wg.Done()
+	}()
+
 	for {
 	startToReceiveNewLine:
 		select {
@@ -202,7 +208,7 @@ func lineExtractor(lineStream chan string, logCh chan *Item) {
 				return
 			}
 
-			mm, ok := prepare(line)
+			mm, ok := extractPrepare(line)
 			if !ok {
 				goto startToReceiveNewLine
 			}
@@ -221,18 +227,113 @@ func lineExtractor(lineStream chan string, logCh chan *Item) {
 				goto startToReceiveNewLine
 			}
 
-			//if ok = extractRanges(mm, item); ok {
-			//	goto startToReceiveNewLine
-			//}
+			if ok = extractRanges(mm, item); !ok {
+				goto startToReceiveNewLine
+			}
 
 			logCh <- item
 		}
 	}
 }
 
-const pixel int64 = 200
+const txnLifeSpanFmtLength int64 = 120
 
-func logger(logCh chan *Item) {
+func fmtLogHeader() string {
+	str := "\n\n\n"
+	for idx := int64(0); idx < txnLifeSpanFmtLength; idx++ {
+		str += "*"
+	}
+	str += "\n\n\n"
+	return str
+}
+
+func sortedOpNames(item *Item) []string {
+	idx := 0
+	opNames := make([]string, len(item.phaseMap))
+	for ph := range item.phaseMap {
+		opNames[idx] = ph
+		idx++
+	}
+
+	sort.Slice(opNames, func(i, j int) bool {
+		if len(item.phaseMap[opNames[i]]) == 0 {
+			return true
+		}
+
+		if len(item.phaseMap[opNames[j]]) == 0 {
+			return false
+		}
+
+		// (start,end),(start,end),...
+		// check the first start
+		return item.phaseMap[opNames[i]][0][0] < item.phaseMap[opNames[i]][0][0]
+	})
+
+	return opNames
+}
+
+func fmtRanges(item *Item) string {
+	return fmt.Sprintf("ranges: %d/%d=%.3f, taken: %dms\n",
+		item.rngHit, item.rngTotal, float64(item.rngHit)/float64(item.rngTotal),
+		time.UnixMicro(item.rngEnd).Sub(time.UnixMicro(item.rngStart)).Milliseconds())
+}
+
+func fmtCNCommit(item *Item) string {
+	return fmt.Sprintf("cn commit: taken: %dms\n\n",
+		time.Unix(0, item.cnCommitEnd).Sub(time.Unix(0, item.cnCommitStart)).Milliseconds())
+}
+
+func fmtTxnLifeSpan(item *Item) string {
+
+	var buf bytes.Buffer
+
+	buf.WriteString("|")
+	for idx := int64(2); idx < txnLifeSpanFmtLength; idx++ {
+		buf.WriteString("-")
+	}
+
+	buf.WriteString(fmt.Sprintf("|\t\ttxn life span(%dms)\n", item.txnEnd-item.txnEnd))
+
+	return buf.String()
+}
+
+func fmtOpLifeSpan(opName string, item *Item) string {
+	offset := item.txnStart
+	txnLifeSpan := float64(item.txnEnd - item.txnStart)
+
+	var lifeSpan int64
+	var buf bytes.Buffer
+	segs := item.phaseMap[opName]
+
+	for idx := 0; idx < len(segs); idx++ {
+		interval := segs[idx]
+		blankLen := int(float64(interval[0]-offset) / txnLifeSpan * float64(txnLifeSpanFmtLength))
+
+		for x := 0; x < blankLen; x++ {
+			buf.WriteString(" ")
+		}
+
+		duration := interval[1] - interval[0]
+		lifeSpan += duration
+		dashLen := int(float64(duration)/txnLifeSpan*float64(txnLifeSpanFmtLength)) - 2
+
+		if duration > 1000 {
+			buf.WriteString("|")
+			for x := 0; x < dashLen; x++ {
+				buf.WriteString("-")
+			}
+			buf.WriteString("|")
+		}
+
+		offset = interval[1]
+	}
+
+	buf.WriteString(fmt.Sprintf("\t\t%s(%dms)\n", opName, lifeSpan))
+
+	return buf.String()
+}
+
+func logger(logCh chan *Item, wg *sync.WaitGroup) {
 	file, err := os.Create("draw.txt")
 	if err != nil {
 		fmt.Println("create draw.txt failed", err.Error())
@@ -242,6 +343,7 @@ func logger(logCh chan *Item) {
 	defer func() {
 		file.Sync()
 		file.Close()
+		wg.Done()
 	}()
 
 	for {
@@ -251,55 +353,15 @@ func logger(logCh chan *Item) {
 				return
 			}
 
-			idx := 0
-			phases := make([]string, len(item.phaseMap))
-			for ph := range item.phaseMap {
-				phases[idx] = ph
-				idx++
+			file.WriteString(fmtLogHeader())
+			file.WriteString(fmtRanges(item))
+			file.WriteString(fmtCNCommit(item))
+			file.WriteString(fmtTxnLifeSpan(item))
+
+			opNames := sortedOpNames(item)
+			for idx := 0; idx < len(opNames); idx++ {
+				file.WriteString(fmtOpLifeSpan(opNames[idx], item))
 			}
-
-			sort.Slice(phases, func(i, j int) bool {
-				if len(item.phaseMap[phases[i]]) == 0 {
-					return true
-				}
-
-				if len(item.phaseMap[phases[j]]) == 0 {
-					return false
-				}
-
-				// (start,end),(start,end),...
-				// check the first start
-				return item.phaseMap[phases[i]][0][0] < item.phaseMap[phases[i]][0][0]
-			})
-
-			div := (item.txnEnd - item.txnStart + 1) / pixel
-			file.WriteString("|")
-			for idx := int64(0); idx < pixel; idx++ {
-				file.WriteString("-")
-			}
-
-			file.WriteString("|\ttxn life span")
-
-			for idx := 0; idx < len(phases); idx++ {
-				file.WriteString("\n")
-				durs := item.phaseMap[phases[idx]]
-				for x := range durs {
-					start, end := durs[x][0], durs[x][1]
-					blank := (start - item.txnStart + 1) / div
-					for y := int64(0); y < blank; y++ {
-						file.WriteString(" ")
-					}
-					file.WriteString("|")
-					ll := (end - start + 1) / div
-					for y := int64(1); y < ll; y++ {
-						file.WriteString("-")
-					}
-					file.WriteString("|")
-				}
-				file.WriteString(fmt.Sprintf("\t%s", phases[idx]))
-			}
-
-			file.WriteString("\n\n\n")
 
 			itemPool.Put(item)
 		}
@@ -321,17 +383,16 @@ func Test_Main(t *testing.T) {
 	lineStream := make(chan string)
 	loggerCh := make(chan *Item, 1000*100)
 
-	go lineExtractor(lineStream, loggerCh)
-	go logger(loggerCh)
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	go lineExtractor(lineStream, loggerCh, &wg)
+	go logger(loggerCh, &wg)
 
 	for scanner.Scan() {
 		lineStream <- scanner.Text()
 	}
 
-	time.Sleep(time.Second * 5)
-
 	close(lineStream)
-	close(loggerCh)
-
-	time.Sleep(time.Second * 5)
+	wg.Wait()
 }
