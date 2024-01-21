@@ -8,4 +8,4 @@ cd ../insert_benchmark
 # -timeout 1h: set the golang test timeout
 # insSize 1000: trying to insert 1000 rows
 
-go test -run Test_Main -withPK 2 -terminals 1 -sessions 1 -withTXN 1000 -keepTbl 0 -insSize 1000 -timeout 1h
+go test -run Test_Main -withPK 1 -terminals 1 -sessions 1 -withTXN 100 -keepTbl 1 -insSize 300000 -timeout 1h

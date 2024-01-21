@@ -34,20 +34,20 @@ type ClusterPKTable struct {
 	C int64
 }
 
-var terminals = flag.Int("terminals", 5, "parallel terminals to test")
-var sessions = flag.Int("sessions", 5, "sessions cnt to test")
-var withPK = flag.Int("withPK", 0, "")
+var terminals = flag.Int("terminals", 1, "parallel terminals to test")
+var sessions = flag.Int("sessions", 1, "sessions cnt to test")
+var withPK = flag.Int("withPK", 1, "")
 var withTxn = flag.Int("withTXN", 1000, "")
 var keepTbl = flag.Int("keepTbl", 0, "")
 var insSize = flag.Int("insSize", 1000*1000, "")
 
-var latencyDir string = "./latency_recorder"
-var tracePProfDir string = "./trace_pprof"
+var latencyDir string
+var tracePProfDir string
 
 const dbname string = "standalone_insert_db"
 
 func connect2DB() *gorm.DB {
-	dsn := fmt.Sprintf("dump:f56TEhwiswWu@tcp(127.0.0.1:6003)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
+	dsn := fmt.Sprintf("dump:111@tcp(127.0.0.1:6001)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error)})
 	if err != nil {
@@ -235,8 +235,12 @@ func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGro
 func InsertWorker(db *gorm.DB, tblName string) {
 	recorders = newLatencyRecorder(*terminals, 100)
 
-	os.Mkdir(tracePProfDir, 0666)
-	os.Mkdir(latencyDir, 0666)
+	dir, _ := os.Getwd()
+	latencyDir = dir + "/latency_recorder"
+	tracePProfDir = dir + "/trace_pprof"
+
+	os.Mkdir(tracePProfDir, 0777)
+	os.Mkdir(latencyDir, 0777)
 
 	var ses []*gorm.DB
 	for idx := 0; idx < *sessions; idx++ {
@@ -283,7 +287,7 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 			wg.Add(2)
 			go func() {
 				name := fmt.Sprintf("%s/trace_%02d.out", tracePProfDir, id)
-				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/trace?seconds=30")
+				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/trace?seconds=15")
 
 				if err := cmd.Run(); err != nil {
 					fmt.Println(err.Error())
@@ -293,7 +297,7 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 
 			go func() {
 				name := fmt.Sprintf("%s/profile_%02d.out", tracePProfDir, id)
-				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/profile?seconds=30")
+				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/profile?seconds=15")
 				if err := cmd.Run(); err != nil {
 					fmt.Println(err.Error())
 				}
@@ -302,7 +306,7 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 
 			wg.Wait()
 			id++
-			ticker.Reset(time.Second * 30)
+			ticker.Reset(time.Second * 15)
 		}
 	}
 }
