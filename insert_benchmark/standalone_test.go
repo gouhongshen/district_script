@@ -65,12 +65,9 @@ func connect2DB(dbname string) *gorm.DB {
 
 func createNoPKTable() *gorm.DB {
 	db := connect2DB(standaloneInsertDB)
-	//if err := db.AutoMigrate(&NoPKTable{}); err != nil {
-	//	panic("failed to create table")
-	//}
 	if *keepTbl <= 0 {
 		db.Exec("drop table no_pk_tables")
-		db.Exec("create table no_pk_tables (a bigint, b bigint, c bigint)")
+		db.Exec("create table no_pk_tables (a bigint, b bigint, c bigint, d varchar, e bigint)")
 	}
 
 	return db
@@ -78,13 +75,9 @@ func createNoPKTable() *gorm.DB {
 
 func createSinglePKTable() *gorm.DB {
 	db := connect2DB(standaloneInsertDB)
-	//if err := db.AutoMigrate(&SinglePKTable{}); err != nil {
-	//	panic("failed to create table")
-	//}
-
 	if *keepTbl <= 0 {
 		db.Exec("drop table single_pk_tables")
-		db.Exec("create table single_pk_tables (a bigint, b bigint, c bigint, primary key (`a`))")
+		db.Exec("create table single_pk_tables (a bigint, b bigint, c bigint, d varchar, e bigint, primary key (`a`))")
 	}
 
 	return db
@@ -92,14 +85,10 @@ func createSinglePKTable() *gorm.DB {
 
 func createClusterPKTable() *gorm.DB {
 	db := connect2DB(standaloneInsertDB)
-	//if err := db.AutoMigrate(&SinglePKTable{}); err != nil {
-	//	panic("failed to create table")
-	//}
-
 	if *keepTbl <= 0 {
 		db.Exec("drop table cluster_pk_tables")
 		time.Sleep(time.Second)
-		db.Exec("create table cluster_pk_tables (a bigint, b bigint, c bigint, primary key (`a`, `b`))")
+		db.Exec("create table cluster_pk_tables (a bigint, b bigint, c bigint, d varchar, e bigint, primary key (`a`, `b`))")
 	}
 
 	return db
