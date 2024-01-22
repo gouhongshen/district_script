@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/google/uuid"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -20,18 +21,24 @@ type NoPKTable struct {
 	A int64
 	B int64
 	C int64
+	D string
+	E int64
 }
 
 type SinglePKTable struct {
 	A int64 `gorm:"primaryKey"`
 	B int64
 	C int64
+	D string
+	E int64
 }
 
 type ClusterPKTable struct {
 	A int64 `gorm:"primaryKey"`
 	B int64 `gorm:"primaryKey"`
 	C int64
+	D string
+	E int64
 }
 
 var terminals = flag.Int("terminals", 5, "parallel terminals to test")
@@ -44,10 +51,10 @@ var insSize = flag.Int("insSize", 1000*1000, "")
 var latencyDir string = "./latency_recorder"
 var tracePProfDir string = "./trace_pprof"
 
-const dbname string = "standalone_insert_db"
+const standaloneInsertDB string = "standalone_insert_db"
 
-func connect2DB() *gorm.DB {
-	dsn := fmt.Sprintf("dump:111@tcp(127.0.0.1:6001)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
+func connect2DB(dbname string) *gorm.DB {
+	dsn := fmt.Sprintf("dump:f56TEhwiswWu@tcp(127.0.0.1:6003)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error)})
 	if err != nil {
@@ -57,7 +64,7 @@ func connect2DB() *gorm.DB {
 }
 
 func createNoPKTable() *gorm.DB {
-	db := connect2DB()
+	db := connect2DB(standaloneInsertDB)
 	//if err := db.AutoMigrate(&NoPKTable{}); err != nil {
 	//	panic("failed to create table")
 	//}
@@ -70,7 +77,7 @@ func createNoPKTable() *gorm.DB {
 }
 
 func createSinglePKTable() *gorm.DB {
-	db := connect2DB()
+	db := connect2DB(standaloneInsertDB)
 	//if err := db.AutoMigrate(&SinglePKTable{}); err != nil {
 	//	panic("failed to create table")
 	//}
@@ -84,7 +91,7 @@ func createSinglePKTable() *gorm.DB {
 }
 
 func createClusterPKTable() *gorm.DB {
-	db := connect2DB()
+	db := connect2DB(standaloneInsertDB)
 	//if err := db.AutoMigrate(&SinglePKTable{}); err != nil {
 	//	panic("failed to create table")
 	//}
@@ -98,14 +105,16 @@ func createClusterPKTable() *gorm.DB {
 	return db
 }
 
-func generateValues(s int, e int, offset int64) (string, time.Duration) {
+func defaultGenerateValues(s int, e int, offset int64) (string, time.Duration) {
 	start := time.Now()
 	var values []string
 	for idx := s; idx < e; idx++ {
 		a := int64(idx) + offset
 		b := 2 * a
 		c := 3 * a
-		values = append(values, fmt.Sprintf("(%d,%d,%d)", a, b, c))
+		d := uuid.New().String()
+		e := 4 * a
+		values = append(values, fmt.Sprintf("(%d,%d,%d,'%s',%d)", a, b, c, d, e))
 	}
 	return strings.Join(values, ","), time.Since(start)
 }
@@ -185,11 +194,18 @@ func insertHelper(db *gorm.DB, tblName string, values string, jobId int) {
 	rr.OpCounter++
 }
 
-func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGroup, jobId int) {
+func insertJob(
+	ses []*gorm.DB, left, right int,
+	tblName string, wg *sync.WaitGroup,
+	jobId int, generateValues func(s, e int, offset int64) (string, time.Duration)) {
 	startIdx := int64(0)
 	if *keepTbl > 0 {
 		ses[0].Table(tblName).Count(&startIdx)
 		startIdx *= 2
+	}
+
+	if generateValues == nil {
+		generateValues = defaultGenerateValues
 	}
 
 	noiseDur := time.Duration(0)
@@ -232,7 +248,9 @@ func insertJob(ses []*gorm.DB, left, right int, tblName string, wg *sync.WaitGro
 	wg.Done()
 }
 
-func InsertWorker(db *gorm.DB, tblName string) {
+func InsertWorker(
+	db *gorm.DB, tblName string,
+	generateValues func(int, int, int64) (string, time.Duration)) {
 	recorders = newLatencyRecorder(*terminals, 100)
 
 	os.Mkdir(tracePProfDir, 0666)
@@ -255,7 +273,7 @@ func InsertWorker(db *gorm.DB, tblName string) {
 		if idx == *terminals-1 {
 			right = maxRows
 		}
-		go insertJob(ses, left, right, tblName, &wg, idx)
+		go insertJob(ses, left, right, tblName, &wg, idx, generateValues)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -282,7 +300,8 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 		case <-ticker.C:
 			wg.Add(2)
 			go func() {
-				name := fmt.Sprintf("%s/trace_%02d.out", tracePProfDir, id)
+				name := fmt.Sprintf("%s/trace_(pk)%d_(txn)%d_(keep)%d_%02d.out",
+					tracePProfDir, *withPK, *withTxn, *keepTbl, id)
 				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/trace?seconds=30")
 
 				if err := cmd.Run(); err != nil {
@@ -292,7 +311,8 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 			}()
 
 			go func() {
-				name := fmt.Sprintf("%s/profile_%02d.out", tracePProfDir, id)
+				name := fmt.Sprintf("%s/profile_(pk)%d_(txn)%d_(keep)%d_%02d.out",
+					tracePProfDir, *withPK, *withTxn, *keepTbl, id)
 				cmd := exec.Command("curl", "-o", name, "http://127.0.0.1:6060/debug/pprof/profile?seconds=30")
 				if err := cmd.Run(); err != nil {
 					fmt.Println(err.Error())
@@ -327,15 +347,49 @@ func Test_Main(t *testing.T) {
 
 func Test_NoPKInsert(t *testing.T) {
 	db := createNoPKTable()
-	InsertWorker(db, "no_pk_tables")
+	InsertWorker(db, "no_pk_tables", nil)
 }
 
 func Test_SinglePKInsert(t *testing.T) {
 	db := createSinglePKTable()
-	InsertWorker(db, "single_pk_tables")
+	InsertWorker(db, "single_pk_tables", nil)
 }
 
 func Test_ClusterPKInsert(t *testing.T) {
 	db := createClusterPKTable()
-	InsertWorker(db, "cluster_pk_tables")
+	InsertWorker(db, "cluster_pk_tables", nil)
+}
+
+func Test_Statement_CU_Insert(t *testing.T) {
+	db := connect2DB("mo_catalog")
+	InsertWorker(db, "statement_cu_for_test", generateStatementCUValues)
+}
+
+/*
+
++--------------+------------------+------+------+---------+-------+--------------------------------+
+| Field        | Type             | Null | Key  | Default | Extra | Comment                        |
++--------------+------------------+------+------+---------+-------+--------------------------------+
+| statement_id | VARCHAR(36)      | NO   | PRI  | NULL    |       |                                |
+| account      | VARCHAR(300)     | NO   |      | NULL    |       |                                |
+| response_at  | DATETIME(0)      | YES  |      | null    |       |                                |
+| cu           | DECIMAL128(23)   | NO   |      | NULL    |       |                                |
+| account_id   | INT UNSIGNED(32) | NO   | PRI  | NULL    |       | the account_id added by the mo |
++--------------+------------------+------+------+---------+-------+--------------------------------+
+*/
+
+func generateStatementCUValues(s, e int, offset int64) (string, time.Duration) {
+	start := time.Now()
+	var values []string
+	for idx := s; idx < e; idx++ {
+		stmtId := uuid.New().String()
+		account := "account"
+		responseAt := "2024-01-17 06:23:34.861392517"
+		cu := 0
+		accountId := int64(idx) + offset
+
+		values = append(values,
+			fmt.Sprintf("('%s','%s','%s',%d,%d)", stmtId, account, responseAt, cu, accountId))
+	}
+	return strings.Join(values, ","), time.Since(start)
 }
