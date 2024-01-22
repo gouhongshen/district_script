@@ -1,0 +1,30 @@
+terminal: 0, insert 100, 10000 each time
+[0_100):   320.280000ms
+
+terminal: 1, insert 100, 10000 each time
+[0_100):   323.280000ms
+
+terminal: 2, insert 100, 10000 each time
+[0_100):   324.490000ms
+
+terminal: 3, insert 100, 10000 each time
+[0_100):   324.990000ms
+
+terminal: 4, insert 100, 10000 each time
+[0_100):   324.090000ms
+
+terminal: 5, insert 100, 10000 each time
+[0_100):   325.480000ms
+
+terminal: 6, insert 100, 10000 each time
+[0_100):   323.200000ms
+
+terminal: 7, insert 100, 10000 each time
+[0_100):   325.000000ms
+
+terminal: 8, insert 100, 10000 each time
+[0_100):   322.990000ms
+
+terminal: 9, insert 100, 10000 each time
+[0_100):   319.320000ms
+
