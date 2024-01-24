@@ -8,7 +8,11 @@ cd ../insert_benchmark
 # -timeout 1h: set the golang test timeout
 # insSize 1000: trying to insert 1000 rows
 
+# ********************************************* 1 session 1 terminal ********************************************
+
 # go test -run Test_Statement_CU_Insert -terminals 20 -sessions 20 -withTXN 1025 -insSize 102500 -timeout 1h
+
+########################################## no pk
 
 # no pk - single insert - on empty table
 # go test -run Test_Main -withPK 0 -terminals 1 -sessions 1 -withTXN 0 -keepTbl 0 -insSize 100000 -timeout 1h
@@ -44,16 +48,19 @@ cd ../insert_benchmark
 
 ########################################## cluster pk
 
-# one pk - single insert - on empty table
+# cluster pk - single insert - on empty table
 # go test -run Test_Main -withPK 2 -terminals 1 -sessions 1 -withTXN 0 -keepTbl 0 -insSize 100000 -timeout 1h
 
-# one pk - single insert - on 4000W rows table
+# cluster pk - single insert - on 4000W rows table
 # go test -run Test_Main -withPK 2 -terminals 40 -sessions 40 -withTXN 10000 -keepTbl 0 -insSize 40000000 -timeout 1h
 # go test -run Test_Main -withPK 2 -terminals 1 -sessions 1 -withTXN 0 -keepTbl 1 -insSize 100000 -timeout 1h
 
-# one pk - batch insert - on empty table
+# cluster pk - batch insert - on empty table
 # go test -run Test_Main -withPK 2 -terminals 1 -sessions 1 -withTXN 100 -keepTbl 0 -insSize 1000000 -timeout 1h
 
-# one pk - batch insert - on 4000W rows table
+# cluster pk - batch insert - on 4000W rows table
 # go test -run Test_Main -withPK 2 -terminals 40 -sessions 40 -withTXN 10000 -keepTbl 0 -insSize 40000000 -timeout 1h
 # go test -run Test_Main -withPK 2 -terminals 1 -sessions 1 -withTXN 100 -keepTbl 1 -insSize 1000000 -timeout 1h
+
+
+# ********************************************* multi session & terminal ********************************************
