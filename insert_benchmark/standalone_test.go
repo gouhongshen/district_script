@@ -5,12 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/mem"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"math/rand"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -270,15 +273,71 @@ func InsertWorker(
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan struct{})
-	go tracePProfWorker(ctx, ch)
+	ch1 := make(chan struct{})
+	ch2 := make(chan struct{})
+	go tracePProfWorker(ctx, ch1)
+	go cpuMemWorker(ctx, ch2)
 
 	wg.Wait()
 	cancel()
 
-	<-ch
+	<-ch1
+	<-ch2
 
 	syncLatency(tblName, "insert")
+}
+
+func cpuMemWorker(ctx context.Context, ch chan struct{}) {
+	//time.Sleep(time.Second * 10)
+	var cpuUsage []float64
+	var memUsage []float64
+
+	defer func() {
+		sort.Slice(cpuUsage, func(i, j int) bool { return cpuUsage[i] < cpuUsage[j] })
+		sort.Slice(memUsage, func(i, j int) bool { return memUsage[i] < memUsage[j] })
+		avgcpu, midcpu := 0.0, 0.0
+		for idx := range cpuUsage {
+			avgcpu += cpuUsage[idx]
+		}
+		avgcpu = avgcpu / float64(len(cpuUsage))
+		midcpu = cpuUsage[len(cpuUsage)/2]
+
+		avgmem, midmem := 0.0, 0.0
+		for idx := range memUsage {
+			avgmem += memUsage[idx]
+		}
+		avgmem = avgmem / float64(len(memUsage))
+		midmem = memUsage[len(memUsage)/2]
+
+		fmt.Printf("avg-cpu: %.3f/%.3f, mid-cpu: %.3f/%.3f, avg-mem: %.3f/%.3f, mid-mem: %.3f/%.3f\n",
+			avgcpu, 100.0, midcpu, 100.0,
+			avgmem, 100.0, midmem, 100.0)
+	}()
+
+	ticker := time.NewTicker(time.Millisecond * 10)
+	for {
+		select {
+		case <-ctx.Done():
+			ch <- struct{}{}
+			return
+
+		case <-ticker.C:
+			res, err := cpu.Percent(time.Second, false)
+			if err != nil {
+				fmt.Println("cpu.Percent failed")
+			}
+			cpuUsage = append(cpuUsage, res[0])
+
+			memStats, err := mem.VirtualMemory()
+			if err != nil {
+				fmt.Println("mem.VirtualMemory failed")
+			}
+			memUsage = append(memUsage, memStats.UsedPercent)
+
+			ticker.Reset(time.Millisecond * 10)
+		}
+	}
+
 }
 
 func tracePProfWorker(ctx context.Context, ch chan struct{}) {
@@ -311,7 +370,6 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 				}
 				wg.Done()
 			}()
-
 			wg.Wait()
 			id++
 			ticker.Reset(time.Second * 15)
