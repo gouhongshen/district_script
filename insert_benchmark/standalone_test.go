@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -203,7 +202,11 @@ func insertJob(
 	jobId int, generateValues func(s, e int, offset int64) (string, time.Duration)) {
 	startIdx := int64(0)
 	if *keepTbl > 0 {
-		ses[0].Table(tblName).Count(&startIdx)
+		if idx := strings.Index(tblName, "("); idx != -1 {
+			ses[0].Table(tblName[:idx]).Count(&startIdx)
+		} else {
+			ses[0].Table(tblName).Count(&startIdx)
+		}
 		startIdx *= 2
 	}
 
@@ -528,10 +531,10 @@ func generateWideMIndexesValues(s, e int, offset int64) (string, time.Duration) 
 	var values []string
 	for idx := s; idx < e; idx++ {
 		accompanyId := int64(idx) + offset
-
+		rndStr := uuid.New().String()
 		values = append(values,
-			fmt.Sprintf("(%d, '334', '$unique', 'sadf', '1sdfsa', 'adf', '2024-01-19 10:14:48', '1', '2024-01-19 10:14:48', '1', '%s', '4fsadf', '1235657898', 1, 'sadfr354', 'sdf456', '2024-01-19 18:13:29.000', '2024-01-19 18:13:31.000', '1', '2', '1', NULL, '2024-01-19 18:13:41', 2, '2024-01-19 18:14:47.000', 0, 1, 'sd', '1', '234365f', 'dfgfsh', '2', '230', '123', '123', '123', 123, '123', '2024-01-19 18:14:13', '2024-01-19 18:14:15', '2024-01-19 18:14:17', 2, 12, '1', '123wqr')",
-				accompanyId, strconv.Itoa(int(accompanyId))))
+			fmt.Sprintf("(%d, '334', '$unique_%s', 'sadf', '1sdfsa', 'adf', '2024-01-19 10:14:48', '1', '2024-01-19 10:14:48', '1', '%s', '4fsadf', '1235657898', 1, 'sadfr354', 'sdf456', '2024-01-19 18:13:29.000', '2024-01-19 18:13:31.000', '1', '2', '1', NULL, '2024-01-19 18:13:41', 2, '2024-01-19 18:14:47.000', 0, 1, 'sd', '1', '234365f', 'dfgfsh', '2', '230', '123', '123', '123', 123, '123', '2024-01-19 18:14:13', '2024-01-19 18:14:15', '2024-01-19 18:14:17', 2, 12, '1', '123wqr')",
+				accompanyId, rndStr[:16], rndStr[16:]))
 	}
 	return strings.Join(values, ","), time.Since(start)
 }

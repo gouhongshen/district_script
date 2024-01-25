@@ -10,6 +10,8 @@ cd ../insert_benchmark
 
 # go test -run Test_Statement_CU_Insert -terminals 20 -sessions 20 -withTXN 1025 -insSize 102500 -timeout 1h
 
+go test -run Test_WideMIndexedTable_Insert -terminals 50 -sessions 50 -withTXN 0 -keepTbl 1 -insSize 1000000 -timeout 1h
+
 ########################################## no pk
 
 # no pk - single insert - on empty table
