@@ -4,6 +4,7 @@ go 1.20
 
 require (
 	github.com/google/uuid v1.5.0
+	github.com/panjf2000/ants/v2 v2.9.0
 	github.com/shirou/gopsutil/v3 v3.23.12
 	gorm.io/driver/mysql v1.5.2
 	gorm.io/gorm v1.25.5

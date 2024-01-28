@@ -2,6 +2,7 @@ package insert_benchmark
 
 import (
 	"context"
+	"district_script/common"
 	"flag"
 	"fmt"
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -50,6 +52,7 @@ var withPK = flag.Int("withPK", 1, "")
 var withTxn = flag.Int("withTXN", 1000, "")
 var keepTbl = flag.Int("keepTbl", 0, "")
 var insSize = flag.Int("insSize", 1000*1000, "")
+var load = flag.Int("load", 0, "")
 
 var latencyDir string
 var tracePProfDir string
@@ -210,10 +213,6 @@ func insertJob(
 		startIdx *= 2
 	}
 
-	if generateValues == nil {
-		generateValues = defaultGenerateValues
-	}
-
 	noiseDur := time.Duration(0)
 	start := time.Now()
 	totalRows := right - left
@@ -255,8 +254,25 @@ func insertJob(
 }
 
 func InsertWorker(
-	db *gorm.DB, tblName string,
+	db *gorm.DB, dbName, tblName string,
 	generateValues func(int, int, int64) (string, time.Duration)) {
+
+	if generateValues == nil {
+		generateValues = defaultGenerateValues
+	}
+
+	if *load > 0 {
+		fmt.Printf("start to load %dW rows data...\n", *insSize/10000)
+		_, dur := common.LoadData2Table(db, *insSize, dbName, tblName, generateValues)
+		fmt.Printf("load done, takes: %dms\n", dur.Milliseconds())
+		return
+	}
+
+	fmt.Printf(
+		"terminals: %d, sessions: %d, withPK: %d, withTxn: %d, keepTbl: %d, insSize %dW\n",
+		*terminals, *sessions, *withPK, *withTxn, *keepTbl, (*insSize)/10000)
+	fmt.Printf("start: %s\n", time.Now().Local())
+
 	recorders = newLatencyRecorder(*terminals, 100)
 
 	dir, _ := os.Getwd()
@@ -393,10 +409,6 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 
 func Test_Main(t *testing.T) {
 	flag.Parse()
-	fmt.Printf(
-		"terminals: %d, sessions: %d, withPK: %d, withTxn: %d, keepTbl: %d, insSize %dW\n",
-		*terminals, *sessions, *withPK, *withTxn, *keepTbl, (*insSize)/10000)
-	fmt.Printf("start: %s\n", time.Now().Local())
 
 	if *withPK == 2 {
 		Test_ClusterPKInsert(t)
@@ -411,22 +423,22 @@ func Test_Main(t *testing.T) {
 
 func Test_NoPKInsert(t *testing.T) {
 	db := createNoPKTable()
-	InsertWorker(db, "no_pk_tables", nil)
+	InsertWorker(db, standaloneInsertDB, "no_pk_tables", nil)
 }
 
 func Test_SinglePKInsert(t *testing.T) {
 	db := createSinglePKTable()
-	InsertWorker(db, "single_pk_tables", nil)
+	InsertWorker(db, standaloneInsertDB, "single_pk_tables", nil)
 }
 
 func Test_ClusterPKInsert(t *testing.T) {
 	db := createClusterPKTable()
-	InsertWorker(db, "cluster_pk_tables", nil)
+	InsertWorker(db, standaloneInsertDB, "cluster_pk_tables", nil)
 }
 
 func Test_Statement_CU_Insert(t *testing.T) {
 	db := connect2DB("mo_catalog")
-	InsertWorker(db, "statement_cu_for_test", generateStatementCUValues)
+	InsertWorker(db, standaloneInsertDB, "statement_cu_for_test", generateStatementCUValues)
 }
 
 /*
@@ -467,9 +479,9 @@ func Test_WideMIndexedTable_Insert(t *testing.T) {
 		"`platform_id` varchar(64)  NULL DEFAULT NULL COMMENT '平台ID'," +
 		"`subs_id` varchar(32)  NULL DEFAULT NULL COMMENT '用户id kafak导入'," +
 		"`uuid` varchar(64)  NOT NULL DEFAULT '' COMMENT '唯一标识'," +
-		"`create_time` datetime(0) NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'," +
+		"`create_time` varchar(255) NOT NULL DEFAULT '' COMMENT '创建时间'," +
 		"`create_by` varchar(255)  NULL DEFAULT NULL COMMENT '创建者'," +
-		"`update_time` datetime(0) NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP(0) COMMENT '更新时间'," +
+		"`update_time` varchar(255) NOT NULL DEFAULT '' COMMENT '更新时间'," +
 		"`update_by` varchar(255)  NULL DEFAULT NULL COMMENT '更新者'," +
 		"`icciddfaf` varchar(32)  NOT NULL COMMENT 'ICCID'," +
 		"`imsiopld` varchar(32)  NULL DEFAULT NULL COMMENT 'imsiopld kafak导入'," +
@@ -477,15 +489,15 @@ func Test_WideMIndexedTable_Insert(t *testing.T) {
 		"`carrier` int(0) NOT NULL COMMENT '1:中国移动，1:中国电信，3:中国联通'," +
 		"`imei` varchar(32)  NULL DEFAULT NULL COMMENT 'IMEI'," +
 		"`vinodk` varchar(32)  NULL DEFAULT NULL COMMENT '车辆VIN码'," +
-		"`open_` datetime(3) NULL DEFAULT NULL COMMENT '日期'," +
-		"`active` datetime(3) NULL DEFAULT NULL COMMENT '日期'," +
+		"`open_` varchar(255) NOT NULL DEFAULT '' COMMENT '日期'," +
+		"`active` varchar(255) NOT NULL DEFAULT '' COMMENT '日期'," +
 		"`network_type` varchar(8)  NULL DEFAULT NULL COMMENT '网络类型（字典项编码）'," +
 		"`card_type` varchar(8)  NULL DEFAULT NULL COMMENT '卡片物理类型（字典项编码）'," +
 		"`belong_place` varchar(32)  NULL DEFAULT NULL COMMENT '归属地'," +
 		"`remark` varchar(255)  NULL DEFAULT NULL COMMENT '备注'," +
-		"`status_time` datetime(0) NULL DEFAULT NULL COMMENT '卡号状态变更时间'," +
+		"`status_time` varchar(255) NOT NULL DEFAULT '' COMMENT '卡号状态变更时间'," +
 		"`vehicle_status` int(0) NULL DEFAULT NULL COMMENT '车辆状态'," +
-		"`vehicle_out_factory_time` datetime(3) NULL DEFAULT NULL COMMENT '车辆出厂时间'," +
+		"`vehicle_out_factory_time` varchar(255) NOT NULL DEFAULT '' COMMENT '车辆出厂时间'," +
 		"`status` int(0) NOT NULL DEFAULT 0 COMMENT ''," +
 		"`stattu1` int(0) NULL DEFAULT NULL COMMENT ''," +
 		"`account_id` varchar(32)  NULL DEFAULT NULL COMMENT '账户id'," +
@@ -500,9 +512,9 @@ func Test_WideMIndexedTable_Insert(t *testing.T) {
 		"`group_member_status` varchar(128)  NULL DEFAULT NULL COMMENT '归属群组中成员状态'," +
 		"`data_usage` bigint(0) NULL DEFAULT NULL COMMENT '用量'," +
 		"`cust` varchar(255)  NULL DEFAULT NULL COMMENT '编码'," +
-		"`sync_time` datetime(0) NULL DEFAULT NULL COMMENT '通过kafka入库时，每次必须更新的字段，其他入口不用变动'," +
-		"`source_create_time` datetime(0) NULL DEFAULT NULL COMMENT '源端数据创建时间'," +
-		"`source_modify_time` datetime(0) NULL DEFAULT NULL COMMENT '源端数据修改时间'," +
+		"`sync_time` varchar(255) NOT NULL DEFAULT '' COMMENT '通过kafka入库时，每次必须更新的字段，其他入口不用变动'," +
+		"`source_create_time` varchar(255) NOT NULL DEFAULT '' COMMENT '源端数据创建时间'," +
+		"`source_modify_time` varchar(255) NOT NULL DEFAULT '' COMMENT '源端数据修改时间'," +
 		"`boss` int(0) NOT NULL COMMENT '运营商BOSS系统，1-移动CT，2-移动PB，3-电信DCP，4-电信M2M，5-联通jasper，6-联通CMP，7-中国电信5GCMP平台'," +
 		"`card_status` varchar(20)  NULL DEFAULT NULL COMMENT '卡状态'," +
 		"`device_num` varchar(64)  NULL DEFAULT NULL COMMENT '设备号'," +
@@ -521,9 +533,9 @@ func Test_WideMIndexedTable_Insert(t *testing.T) {
 		");"
 
 	db := createWideMIndexesTable(createTableSql)
-	prefix := "(company_id, code, vccodedosedf, platform_id, subs_id, uuid, create_time, create_by, update_time, update_by, icciddfaf, imsiopld, msisdn123, carrier, imei, vinodk, open_, active, network_type, card_type, belong_place, remark, status_time, vehicle_status, vehicle_out_factory_time, status, stattu1, account_name, plat_type, cust_id, cust_name, cust_type, be_id, region_id, group_id, group_member_status, data_usage, cust, sync_time, source_create_time, source_modify_time, boss, account_id, card_status, device_num) "
-	tableName := "wide_indexes_table" + prefix
-	InsertWorker(db, tableName, generateWideMIndexesValues)
+	//prefix := "(company_id, code, vccodedosedf, platform_id, subs_id, uuid, create_time, create_by, update_time, update_by, icciddfaf, imsiopld, msisdn123, carrier, imei, vinodk, open_, active, network_type, card_type, belong_place, remark, status_time, vehicle_status, vehicle_out_factory_time, status, stattu1, account_name, plat_type, cust_id, cust_name, cust_type, be_id, region_id, group_id, group_member_status, data_usage, cust, sync_time, source_create_time, source_modify_time, boss, account_id, card_status, device_num) "
+	tableName := "wide_indexes_table"
+	InsertWorker(db, "wide_indexes_db", tableName, generateWideMIndexesValues)
 }
 
 func generateWideMIndexesValues(s, e int, offset int64) (string, time.Duration) {
@@ -531,10 +543,70 @@ func generateWideMIndexesValues(s, e int, offset int64) (string, time.Duration) 
 	var values []string
 	for idx := s; idx < e; idx++ {
 		accompanyId := int64(idx) + offset
-		rndStr := uuid.New().String()
+		code := strconv.FormatInt(time.Now().UnixNano(), 10)
+		vccodedosedf := strconv.FormatInt(time.Now().UnixNano(), 10)
+		platform_id := strconv.FormatInt(time.Now().UnixNano(), 10)
+		subs_id := strconv.FormatInt(time.Now().UnixNano(), 10)
+		uuidstr := strconv.FormatInt(time.Now().UnixNano(), 10)
+		create_time := time.Now().Format("2006-01-02 15:04:05")
+		create_by := strconv.FormatInt(time.Now().UnixNano(), 10)
+		update_time := time.Now().Format("2006-01-02 15:04:05")
+		update_by := strconv.FormatInt(time.Now().UnixNano(), 10)
+		icciddfaf := strconv.FormatInt(time.Now().UnixNano(), 10)
+		imsiopld := strconv.FormatInt(time.Now().UnixNano(), 10)
+		msisdn123 := strconv.FormatInt(time.Now().UnixNano(), 10)
+		carrier := accompanyId
+		imei := strconv.FormatInt(time.Now().UnixNano(), 10)
+		vinodk := strconv.FormatInt(time.Now().UnixNano(), 10)
+		open_ := time.Now().Format("2006-01-02 15:04:05")
+		active := time.Now().Format("2006-01-02 15:04:05")
+		network_type := "notype"
+		card_type := "notype"
+		belong_place := strconv.FormatInt(time.Now().UnixNano(), 10)
+		remark := strconv.FormatInt(time.Now().UnixNano(), 10)
+		status_time := time.Now().Format("2006-01-02 15:04:05")
+		vehicle_status := accompanyId
+		vehicle_out_factory_time := time.Now().Format("2006-01-02 15:04:05")
+		status := accompanyId
+		stattu1 := accompanyId
+		account_id := strconv.FormatInt(time.Now().UnixNano(), 10)
+		account_name := strconv.FormatInt(time.Now().UnixNano(), 10)
+		plat_type := "notype"
+		cust_id := strconv.Itoa(rand.Intn(16))
+		cust_name := strconv.FormatInt(time.Now().UnixNano(), 10)
+		cust_type := strconv.FormatInt(time.Now().UnixNano(), 10)
+		be_id := strconv.FormatInt(time.Now().UnixNano(), 10)
+		region_id := strconv.FormatInt(time.Now().UnixNano(), 10)
+		group_id := strconv.FormatInt(time.Now().UnixNano(), 10)
+		group_member_status := strconv.FormatInt(time.Now().UnixNano(), 10)
+		data_usage := rand.Intn(16)
+		cust := strconv.FormatInt(time.Now().UnixNano(), 10)
+		sync_time := time.Now().Format("2006-01-02 15:04:05")
+		source_create_time := time.Now().Format("2006-01-02 15:04:05")
+		source_modify_time := time.Now().Format("2006-01-02 15:04:05")
+		boss := rand.Intn(16)
+		card_status := strconv.FormatInt(time.Now().UnixNano(), 10)
+		device_num := strconv.FormatInt(time.Now().UnixNano(), 10)
+
 		values = append(values,
-			fmt.Sprintf("(%d, '334', '$unique_%s', 'sadf', '1sdfsa', 'adf', '2024-01-19 10:14:48', '1', '2024-01-19 10:14:48', '1', '%s', '4fsadf', '1235657898', 1, 'sadfr354', 'sdf456', '2024-01-19 18:13:29.000', '2024-01-19 18:13:31.000', '1', '2', '1', NULL, '2024-01-19 18:13:41', 2, '2024-01-19 18:14:47.000', 0, 1, 'sd', '1', '234365f', 'dfgfsh', '2', '230', '123', '123', '123', 123, '123', '2024-01-19 18:14:13', '2024-01-19 18:14:15', '2024-01-19 18:14:17', 2, 12, '1', '123wqr')",
-				accompanyId, rndStr[:16], rndStr[16:]))
+			fmt.Sprintf("(%d,%d,'%s','%s','%s',"+
+				"'%s','%s','%s','%s','%s',"+
+				"'%s','%s','%s','%s',%d,'%s','%s',"+
+				"'%s','%s','%s','%s','%s',"+
+				"'%s','%s',%d,'%s',"+
+				"%d,%d,'%s','%s','%s',"+
+				"'%s','%s','%s','%s','%s','%s',"+
+				"'%s',%d,'%s','%s','%s',"+
+				"'%s',%d,'%s','%s')",
+				accompanyId*2, accompanyId, code, vccodedosedf, platform_id,
+				subs_id, uuidstr, create_time, create_by, update_time,
+				update_by, icciddfaf, imsiopld, msisdn123, carrier, imei, vinodk,
+				open_, active, network_type, card_type, belong_place,
+				remark, status_time, vehicle_status, vehicle_out_factory_time,
+				status, stattu1, account_id, account_name, plat_type,
+				cust_id, cust_name, cust_type, be_id, region_id, group_id,
+				group_member_status, data_usage, cust, sync_time, source_create_time,
+				source_modify_time, boss, card_status, device_num))
 	}
 	return strings.Join(values, ","), time.Since(start)
 }
