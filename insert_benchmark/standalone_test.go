@@ -206,9 +206,9 @@ func insertJob(
 	startIdx := int64(0)
 	if *keepTbl > 0 {
 		if idx := strings.Index(tblName, "("); idx != -1 {
-			ses[0].Table(tblName[:idx]).Count(&startIdx)
+			ses[jobId%len(ses)].Table(tblName[:idx]).Count(&startIdx)
 		} else {
-			ses[0].Table(tblName).Count(&startIdx)
+			ses[jobId%len(ses)].Table(tblName).Count(&startIdx)
 		}
 		startIdx *= 2
 	}
@@ -225,13 +225,13 @@ func insertJob(
 			values, dur := generateValues(idx, idx+step, startIdx)
 			noiseDur += dur
 
-			insertHelper(ses[rand.Int()%len(ses)], tblName, values, jobId)
+			insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
 		}
 
 		values, dur := generateValues(idx, right, startIdx)
 		noiseDur += dur
 
-		insertHelper(ses[rand.Int()%len(ses)], tblName, values, jobId)
+		insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
 
 		realDur := (time.Since(start) - noiseDur).Seconds()
 		fmt.Printf("insert into %s %d rows (with txn %d) done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
@@ -242,7 +242,7 @@ func insertJob(
 			values, dur := generateValues(idx, idx+1, startIdx)
 			noiseDur += dur
 
-			insertHelper(ses[rand.Int()%len(ses)], tblName, values, jobId)
+			insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
 		}
 
 		realDur := (time.Since(start) - noiseDur).Seconds()
