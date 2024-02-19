@@ -198,16 +198,20 @@ func syncLatency(tblName string, op string) {
 	file.Close()
 }
 
-func insertHelper(db *gorm.DB, tblName string, values string, jobId int) {
+func insertHelper(db *gorm.DB, tblName string, values string, jobId int) bool {
 	start := time.Now()
 	rr := recorders[jobId]
 
-	db.Exec(fmt.Sprintf("insert into %s values %s;", tblName, values))
+	if db.Exec(fmt.Sprintf("insert into %s values %s;", tblName, values)).Error != nil {
+		return false
+	}
 
 	dur := time.Since(start).Milliseconds()
 
 	rr.LatencyMap[rr.OpCounter/rr.RecorderStep] += dur
 	rr.OpCounter++
+
+	return true
 }
 
 func insertJob(
@@ -227,6 +231,7 @@ func insertJob(
 	noiseDur := time.Duration(0)
 	start := time.Now()
 	totalRows := right - left
+	succeedRows := totalRows
 
 	if *withTxn > 0 {
 		step := *withTxn
@@ -236,29 +241,35 @@ func insertJob(
 			values, dur := generateValues(idx, idx+step, startIdx)
 			noiseDur += dur
 
-			insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
+			if !insertHelper(ses[jobId%len(ses)], tblName, values, jobId) {
+				succeedRows -= step
+			}
 		}
 
 		values, dur := generateValues(idx, right, startIdx)
 		noiseDur += dur
 
-		insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
+		if !insertHelper(ses[jobId%len(ses)], tblName, values, jobId) {
+			succeedRows -= (right - idx)
+		}
 
 		realDur := (time.Since(start) - noiseDur).Seconds()
 		fmt.Printf("insert into %s %d rows (with txn %d) done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
-			tblName, totalRows, step, realDur, realDur*1000/(float64(totalRows)/float64(step)), step)
+			tblName, succeedRows, step, realDur, realDur*1000/(float64(succeedRows)/float64(step)), step)
 
 	} else {
 		for idx := left; idx < right; idx++ {
 			values, dur := generateValues(idx, idx+1, startIdx)
 			noiseDur += dur
 
-			insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
+			if !insertHelper(ses[jobId%len(ses)], tblName, values, jobId) {
+				succeedRows -= 1
+			}
 		}
 
 		realDur := (time.Since(start) - noiseDur).Seconds()
 		fmt.Printf("insert into %s %d rows done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
-			tblName, totalRows, realDur, realDur*1000/(float64(totalRows)), 1)
+			tblName, succeedRows, realDur, realDur*1000/(float64(succeedRows)), 1)
 	}
 
 	wg.Done()
