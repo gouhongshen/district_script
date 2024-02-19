@@ -198,20 +198,20 @@ func syncLatency(tblName string, op string) {
 	file.Close()
 }
 
-func insertHelper(db *gorm.DB, tblName string, values string, jobId int) bool {
+func insertHelper(db *gorm.DB, tblName string, values string, jobId int) (bool, time.Duration) {
 	start := time.Now()
 	rr := recorders[jobId]
 
 	if db.Exec(fmt.Sprintf("insert into %s values %s;", tblName, values)).Error != nil {
-		return false
+		return false, time.Since(start)
 	}
 
-	dur := time.Since(start).Milliseconds()
+	dur := time.Since(start)
 
-	rr.LatencyMap[rr.OpCounter/rr.RecorderStep] += dur
+	rr.LatencyMap[rr.OpCounter/rr.RecorderStep] += dur.Milliseconds()
 	rr.OpCounter++
 
-	return true
+	return true, dur
 }
 
 func insertJob(
@@ -232,6 +232,7 @@ func insertJob(
 	start := time.Now()
 	totalRows := right - left
 	succeedRows := totalRows
+	succeedTxns := 0
 
 	if *withTxn > 0 {
 		step := *withTxn
@@ -241,35 +242,47 @@ func insertJob(
 			values, dur := generateValues(idx, idx+step, startIdx)
 			noiseDur += dur
 
-			if !insertHelper(ses[jobId%len(ses)], tblName, values, jobId) {
+			ok, s := insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
+			if !ok {
 				succeedRows -= step
+				noiseDur += s
+			} else {
+				succeedTxns++
 			}
 		}
 
 		values, dur := generateValues(idx, right, startIdx)
 		noiseDur += dur
 
-		if !insertHelper(ses[jobId%len(ses)], tblName, values, jobId) {
+		ok, s := insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
+		if !ok {
 			succeedRows -= (right - idx)
+			noiseDur += s
+		} else {
+			succeedTxns++
 		}
 
 		realDur := (time.Since(start) - noiseDur).Seconds()
 		fmt.Printf("insert into %s %d rows (with txn %d) done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
-			tblName, succeedRows, step, realDur, realDur*1000/(float64(succeedRows)/float64(step)), step)
+			tblName, succeedRows, step, realDur, realDur*1000/(float64(succeedTxns)), step)
 
 	} else {
 		for idx := left; idx < right; idx++ {
 			values, dur := generateValues(idx, idx+1, startIdx)
 			noiseDur += dur
 
-			if !insertHelper(ses[jobId%len(ses)], tblName, values, jobId) {
+			ok, s := insertHelper(ses[jobId%len(ses)], tblName, values, jobId)
+			if !ok {
 				succeedRows -= 1
+				noiseDur += s
+			} else {
+				succeedTxns++
 			}
 		}
 
 		realDur := (time.Since(start) - noiseDur).Seconds()
 		fmt.Printf("insert into %s %d rows done, takes %6.3f s, %6.3f ms/txn(%d values)\n",
-			tblName, succeedRows, realDur, realDur*1000/(float64(succeedRows)), 1)
+			tblName, succeedRows, realDur, realDur*1000/(float64(succeedTxns)), 1)
 	}
 
 	wg.Done()
