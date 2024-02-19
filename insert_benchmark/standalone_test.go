@@ -60,10 +60,10 @@ var tracePProfDir string
 const standaloneInsertDB string = "standalone_insert_db"
 
 func connect2DB(dbname string) *gorm.DB {
-	dsn := fmt.Sprintf("dump:111@tcp(127.0.0.1:6001)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
+	dsn := fmt.Sprintf("dump:111@tcp(localhost:6001)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger:      logger.Default.LogMode(logger.Error),
-		PrepareStmt: true})
+		PrepareStmt: false})
 	if err != nil {
 		panic("failed to connect to database!")
 	}
@@ -73,9 +73,9 @@ func connect2DB(dbname string) *gorm.DB {
 		panic("db.DB() failed")
 	}
 
-	sqlDb.SetConnMaxLifetime(time.Hour)
-	sqlDb.SetMaxOpenConns(500)
-	sqlDb.SetMaxIdleConns(10)
+	sqlDb.SetMaxIdleConns(1000)
+	sqlDb.SetMaxOpenConns(1000)
+	sqlDb.SetConnMaxLifetime(time.Minute * 10)
 
 	return db
 }
@@ -374,9 +374,14 @@ func cpuMemWorker(ctx context.Context, ch chan struct{}) {
 		avgmem = avgmem / float64(len(memUsage))
 		midmem = memUsage[len(memUsage)/2]
 
-		fmt.Printf("avg-cpu: %.3f/%.3f, mid-cpu: %.3f/%.3f, avg-mem: %.3f/%.3f, mid-mem: %.3f/%.3f\n",
+		fmt.Printf("avg-cpu: %.3f/%.3f, mid-cpu: %.3f/%.3f, "+
+			"min-cpu: %.3f/%.3f, max-cpu: %.3f/%.3f \n"+
+			"avg-mem: %.3f/%.3f, mid-mem: %.3f/%.3f,"+
+			"min-mem: %.3f/%.3f, max-mem: %.3f/%.3f\n",
 			avgcpu, 100.0, midcpu, 100.0,
-			avgmem, 100.0, midmem, 100.0)
+			cpuUsage[0], 100.0, cpuUsage[len(cpuUsage)-1], 100.0,
+			avgmem, 100.0, midmem, 100.0,
+			memUsage[0], 100.0, memUsage[len(memUsage)-1], 100.0)
 	}()
 
 	ticker := time.NewTicker(time.Millisecond * 10)
