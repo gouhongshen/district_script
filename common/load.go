@@ -19,7 +19,7 @@ func dataWorker(
 	left := totalRows
 	s := 0
 	for left > 0 {
-		batch := 1000 * 10
+		batch := 1000 * 100
 		if batch > left {
 			batch = left
 		}

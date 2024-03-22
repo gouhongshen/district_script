@@ -60,7 +60,8 @@ var tracePProfDir string
 const standaloneInsertDB string = "standalone_insert_db"
 
 func connect2DB(dbname string) *gorm.DB {
-	dsn := fmt.Sprintf("dump:111@tcp(localhost:6001)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
+	//dsn := fmt.Sprintf("dump:111@tcp(localhost:6001)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
+	dsn := fmt.Sprintf("018e55ea_c242_73f2_85f9_8dd32e997528#admin#accountadmin:Admin123@tcp(freetier-02.cn-hangzhou.cluster.cn-qa.matrixone.tech:6001)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbname)
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger:      logger.Default.LogMode(logger.Error),
 		PrepareStmt: false})
@@ -319,7 +320,8 @@ func InsertWorker(
 
 	var ses []*gorm.DB
 	for idx := 0; idx < *sessions; idx++ {
-		ses = append(ses, db.Session(&gorm.Session{PrepareStmt: true}))
+		ses = append(ses, db.Session(&gorm.Session{PrepareStmt: false}))
+
 	}
 
 	maxRows := *insSize
@@ -442,7 +444,7 @@ func tracePProfWorker(ctx context.Context, ch chan struct{}) {
 			}()
 			wg.Wait()
 			id++
-			ticker.Reset(time.Second * 15)
+			ticker.Reset(time.Second * 30)
 		}
 	}
 }
